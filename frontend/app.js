@@ -37,7 +37,8 @@ let isSending      = false;        // lock while AI is responding
 let hasMore        = false;        // older messages available
 let oldestMsgId    = null;         // cursor for pagination
 let streamingBubble = null;        // <div> being built from chunks
-let reconnectTimer = null;
+let reconnectTimer  = null;
+let connectTimeout  = null;   // fires if WS stays CONNECTING too long
 
 // ── DOM refs ─────────────────────────────────────────────────────────────────
 const chatList     = document.getElementById("chat-list");
@@ -272,12 +273,30 @@ async function loadMoreMessages() {
 
 // ── WebSocket ─────────────────────────────────────────────────────────────────
 function connectWS() {
-  if (ws && ws.readyState <= WebSocket.OPEN) return;
+  // Only skip if there's already a healthy OPEN connection
+  if (ws && ws.readyState === WebSocket.OPEN) return;
+
+  // Kill any stuck CONNECTING / CLOSING socket before replacing it
+  if (ws) {
+    ws.onopen = ws.onclose = ws.onerror = ws.onmessage = null;
+    ws.close();
+    ws = null;
+  }
+  clearTimeout(connectTimeout);
+  clearTimeout(reconnectTimer);
 
   setStatus("connecting…");
   ws = new WebSocket(`${WS_BASE}/ws?session_id=${sessionId}`);
 
+  // If the server doesn't complete the handshake in 10s, force a retry
+  connectTimeout = setTimeout(() => {
+    if (ws && ws.readyState !== WebSocket.OPEN) {
+      ws.close();  // triggers the close event → schedules reconnect
+    }
+  }, 10000);
+
   ws.addEventListener("open", () => {
+    clearTimeout(connectTimeout);
     clearTimeout(reconnectTimer);
     setStatus("online", true);
     setInputLocked(false);
