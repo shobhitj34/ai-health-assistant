@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Disha – Your Health Coach</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+
+<!-- App shell -->
+<div id="app">
+
+  <!-- Header -->
+  <header id="header">
+    <div class="header-avatar">D</div>
+    <div class="header-info">
+      <span class="header-name">Disha</span>
+      <span id="header-status" class="header-status">connecting…</span>
+    </div>
+  </header>
+
+  <!-- Load-more trigger (top of chat) -->
+  <div id="load-more-bar" class="load-more-bar hidden">
+    <button id="load-more-btn">Load earlier messages</button>
+  </div>
+
+  <!-- Message list -->
+  <main id="chat-list"></main>
+
+  <!-- Typing indicator -->
+  <div id="typing-indicator" class="typing-indicator hidden">
+    <div class="typing-bubble">
+      <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+    </div>
+  </div>
+
+  <!-- Input bar -->
+  <footer id="input-bar">
+    <textarea
+      id="msg-input"
+      placeholder="Message Disha…"
+      rows="1"
+      maxlength="4000"
+      autocomplete="off"
+    ></textarea>
+    <button id="send-btn" disabled>
+      <!-- Paper-plane SVG -->
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" width="20" height="20">
+        <line x1="22" y1="2" x2="11" y2="13"></line>
+        <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+      </svg>
+    </button>
+  </footer>
+
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
