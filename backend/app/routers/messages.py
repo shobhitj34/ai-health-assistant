@@ -9,6 +9,11 @@ from ..schemas import MessagesListResponse, MessageResponse, SessionResponse
 
 router = APIRouter(prefix="/api", tags=["messages"])
 
+
+@router.get("/health")
+def health():
+    return {"status": "ok"}
+
 DEFAULT_PAGE_SIZE = 20
 MAX_PAGE_SIZE = 50
 
