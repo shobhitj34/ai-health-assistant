@@ -1,14 +1,14 @@
 # Disha – AI Health Coach
 
-A WhatsApp-style AI health coaching chat app powered by Anthropic Claude.
+A WhatsApp-style AI health coaching chat app powered by Google Gemini.
 
 ---
 
 ## Quick start (local)
 
 ### Prerequisites
-- Python 3.11+
-- An [Anthropic API key](https://console.anthropic.com/)
+- Python 3.9+
+- A [Gemini API key](https://aistudio.google.com/) (free tier available)
 
 ### 1. Clone & set up environment
 
@@ -23,16 +23,16 @@ pip install -r requirements.txt
 
 ```bash
 cp .env.example .env
-# Open .env and set ANTHROPIC_API_KEY=sk-ant-...
+# Open .env and set GEMINI_API_KEY=AIza...
 ```
 
 Full list of variables:
 
 | Variable | Required | Default | Notes |
 |---|---|---|---|
-| `ANTHROPIC_API_KEY` | **yes** | — | Your Anthropic secret key |
-| `MAIN_MODEL` | no | `claude-sonnet-4-6` | Model for chat responses |
-| `FAST_MODEL` | no | `claude-haiku-4-5-20251001` | Model for memory extraction |
+| `GEMINI_API_KEY` | **yes** | — | Your Google Gemini API key |
+| `MAIN_MODEL` | no | `gemini-2.5-flash-lite` | Model for chat responses |
+| `FAST_MODEL` | no | `gemini-2.5-flash-lite` | Model for memory extraction |
 | `DATABASE_URL` | no | `sqlite:///./disha.db` | SQLAlchemy URL; swap to Postgres if needed |
 | `CORS_ORIGINS` | no | `http://localhost:8000` | Comma-separated allowed origins |
 
@@ -120,7 +120,7 @@ REST router     WebSocket handler
 |---|---|
 | `typing { is_typing }` | Show/hide typing indicator |
 | `user_saved { id, created_at }` | Confirm user message was persisted |
-| `chunk { content }` | Streamed token from Claude |
+| `chunk { content }` | Streamed token from Gemini |
 | `message_complete { id, created_at }` | AI response fully received |
 | `error { message }` | Graceful error shown in chat |
 
@@ -147,7 +147,7 @@ user sends message
 
 ### LLM call architecture
 
-Every AI response is a single Anthropic `messages.stream` call with three context layers assembled at call time:
+Every AI response is a single Gemini `generate_content_stream` call with context layers assembled at call time:
 
 1. **System prompt** – Disha's persona + communication rules
 2. **Long-term memory** – Structured facts extracted from past conversations (name, age, conditions, goals, medications)
@@ -163,11 +163,11 @@ Every AI response is a single Anthropic `messages.stream` call with three contex
 
 **Memory extraction**
 
-After every 10 messages (or after the first 4 onboarding messages), a background `asyncio.create_task` calls `claude-haiku` with a structured extraction prompt to update `user.long_term_memory` (a JSON column). The task opens its own DB session so it never blocks the WebSocket.
+After every 10 messages (or after the first 4 onboarding messages), a background `asyncio.create_task` calls `gemini-2.5-flash-lite` with a structured extraction prompt to update `user.long_term_memory` (a JSON column). The task opens its own DB session so it never blocks the WebSocket.
 
 **Onboarding**
 
-New users (message_count == 0) receive a welcome message generated automatically on WebSocket connect. The system prompt enters "onboarding mode" which instructs Disha to gather name, age, primary health concern, and conditions conversationally over 2-3 messages. Once the haiku extraction detects a name + concern, `onboarding_complete` is set to `true`.
+New users (message_count == 0) receive a welcome message generated automatically on WebSocket connect. The system prompt enters "onboarding mode" which instructs Disha to gather name, age, primary health concern, and conditions conversationally over 2-3 messages. Once the extraction detects a name + concern, `onboarding_complete` is set to `true`.
 
 ### Protocol matching
 

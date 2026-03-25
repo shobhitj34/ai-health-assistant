@@ -3,9 +3,9 @@ import os
 import json
 import asyncio
 import logging
-from datetime import datetime
 
-import anthropic
+from google import genai
+from google.genai import types
 from sqlalchemy.orm import Session
 
 from ..models import User, Message, Protocol
@@ -14,21 +14,21 @@ from .protocols import match_protocols
 
 logger = logging.getLogger(__name__)
 
-MAIN_MODEL = os.getenv("MAIN_MODEL", "claude-sonnet-4-6")
-FAST_MODEL = os.getenv("FAST_MODEL", "claude-haiku-4-5-20251001")
-MAX_CONTEXT_MESSAGES = 30   # keep this many messages verbatim for LLM context
-MEMORY_EXTRACT_INTERVAL = 10  # extract memory every N total messages
+MAIN_MODEL = os.getenv("MAIN_MODEL", "gemini-2.5-flash-lite")
+FAST_MODEL = os.getenv("FAST_MODEL", "gemini-2.5-flash-lite")
+MAX_CONTEXT_MESSAGES = 30
+MEMORY_EXTRACT_INTERVAL = 10
 
-_client: Optional[anthropic.AsyncAnthropic] = None
+_client: Optional[genai.Client] = None
 
 
-def get_client() -> anthropic.AsyncAnthropic:
+def get_client() -> genai.Client:
     global _client
     if _client is None:
-        api_key = os.getenv("ANTHROPIC_API_KEY")
+        api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
-            raise RuntimeError("ANTHROPIC_API_KEY is not set")
-        _client = anthropic.AsyncAnthropic(api_key=api_key)
+            raise RuntimeError("GEMINI_API_KEY is not set")
+        _client = genai.Client(api_key=api_key)
     return _client
 
 
@@ -111,7 +111,7 @@ def build_system_prompt(user: User, protocols: List[Protocol], onboarding_mode: 
 # ── Context window management ────────────────────────────────────────────────
 
 def get_context_messages(user_id: int, db: Session) -> List[dict]:
-    """Return the last MAX_CONTEXT_MESSAGES messages formatted for the Anthropic API."""
+    """Return the last MAX_CONTEXT_MESSAGES messages as Gemini-compatible content list."""
     msgs = (
         db.query(Message)
         .filter(Message.user_id == user_id)
@@ -119,8 +119,13 @@ def get_context_messages(user_id: int, db: Session) -> List[dict]:
         .limit(MAX_CONTEXT_MESSAGES)
         .all()
     )
-    msgs.reverse()  # chronological order
-    return [{"role": m.role, "content": m.content} for m in msgs]
+    msgs.reverse()
+    # Gemini uses "user" and "model" roles
+    result = []
+    for m in msgs:
+        role = "model" if m.role == "assistant" else "user"
+        result.append({"role": role, "parts": [{"text": m.content}]})
+    return result
 
 
 # ── Core streaming helper ────────────────────────────────────────────────────
@@ -131,17 +136,29 @@ async def _stream_to_websocket(
     messages: List[dict],
     max_tokens: int = 1024,
 ) -> str:
-    """Stream Claude's reply token-by-token over a WebSocket. Returns full text."""
+    """Stream Gemini's reply token-by-token over a WebSocket. Returns full text."""
     client = get_client()
     full_response = ""
 
-    async with client.messages.stream(
+    contents = [
+        types.Content(role=m["role"], parts=[types.Part(text=m["parts"][0]["text"])])
+        for m in messages
+    ]
+
+    config = types.GenerateContentConfig(
+        system_instruction=system,
+        max_output_tokens=max_tokens,
+        temperature=0.7,
+    )
+
+    stream = await client.aio.models.generate_content_stream(
         model=MAIN_MODEL,
-        max_tokens=max_tokens,
-        system=system,
-        messages=messages,
-    ) as stream:
-        async for text in stream.text_stream:
+        contents=contents,
+        config=config,
+    )
+    async for chunk in stream:
+        text = chunk.text or ""
+        if text:
             full_response += text
             await websocket.send_json({"type": "chunk", "content": text})
 
@@ -155,8 +172,7 @@ async def send_initial_greeting(websocket, user: User, db: Session) -> None:
     await websocket.send_json({"type": "typing", "is_typing": True})
     try:
         system = build_system_prompt(user, [], onboarding_mode=True)
-        # Synthetic "Hi" so the model has a user turn to respond to
-        messages = [{"role": "user", "content": "Hi"}]
+        messages = [{"role": "user", "parts": [{"text": "Hi"}]}]
 
         full_response = await _stream_to_websocket(websocket, system, messages)
 
@@ -174,23 +190,11 @@ async def send_initial_greeting(websocket, user: User, db: Session) -> None:
 
 
 async def handle_user_message(websocket, user: User, content: str, db: Session) -> None:
-    """
-    Full pipeline for a user-sent message:
-    1. Save user message
-    2. Match protocols
-    3. Build system prompt
-    4. Stream AI response
-    5. Save AI response
-    6. Optionally trigger background memory extraction
-    """
-    # Validate / sanitise
     content = content.strip()
     if not content:
         return
-    # Hard cap on input length (prevent prompt injection via very long inputs)
     content = content[:4000]
 
-    # Persist user message first so it's never lost
     user_msg = save_message(db, user.id, "user", content)
     await websocket.send_json({
         "type": "user_saved",
@@ -219,7 +223,6 @@ async def handle_user_message(websocket, user: User, content: str, db: Session) 
             "created_at": ai_msg.created_at.isoformat(),
         })
 
-        # Background memory extraction — non-blocking
         if _should_extract_memory(user):
             asyncio.create_task(
                 _extract_memory_task(user.id, user.message_count, user.long_term_memory or {})
@@ -246,10 +249,6 @@ def _should_extract_memory(user: User) -> bool:
 
 
 async def _extract_memory_task(user_id: int, message_count: int, existing_memory: dict) -> None:
-    """
-    Background coroutine: extract key health facts from recent conversation and
-    persist them into user.long_term_memory.  Uses its own DB session.
-    """
     db = SessionLocal()
     try:
         msgs = (
@@ -260,7 +259,6 @@ async def _extract_memory_task(user_id: int, message_count: int, existing_memory
             .all()
         )
         msgs.reverse()
-
         if not msgs:
             return
 
@@ -294,14 +292,16 @@ Rules:
 - Return ONLY the JSON, no explanation"""
 
         client = get_client()
-        response = await client.messages.create(
+        response = await client.aio.models.generate_content(
             model=FAST_MODEL,
-            max_tokens=512,
-            messages=[{"role": "user", "content": extraction_prompt}],
+            contents=extraction_prompt,
+            config=types.GenerateContentConfig(
+                max_output_tokens=512,
+                temperature=0.1,
+            ),
         )
 
-        raw = response.content[0].text.strip()
-        # Strip markdown fences if the model added them
+        raw = response.text.strip()
         if raw.startswith("```"):
             raw = raw.split("```")[1]
             if raw.startswith("json"):
@@ -310,14 +310,12 @@ Rules:
         extracted: dict = json.loads(raw)
         onboarding_complete: bool = bool(extracted.pop("onboarding_complete", False))
 
-        # Merge: new values override, but don't erase existing ones with empty
         merged = {**existing_memory}
         for k, v in extracted.items():
-            if v or v == 0:  # keep falsy-but-meaningful values like age=0
+            if v or v == 0:
                 merged[k] = v
 
-        # Generate a conversation summary if we're accumulating many messages
-        summary: str | None = None
+        summary = None
         if message_count >= MAX_CONTEXT_MESSAGES:
             summary = await _summarise_old_messages(user_id, db)
 
@@ -332,13 +330,11 @@ Rules:
 
 
 async def _summarise_old_messages(user_id: int, db: Session) -> str:
-    """Create a short summary of messages older than the context window."""
     older_msgs = (
         db.query(Message)
         .filter(Message.user_id == user_id)
         .order_by(Message.id.asc())
         .limit(
-            # summarise everything except the most recent window
             db.query(Message).filter(Message.user_id == user_id).count()
             - MAX_CONTEXT_MESSAGES
         )
@@ -354,9 +350,9 @@ async def _summarise_old_messages(user_id: int, db: Session) -> str:
     )
 
     client = get_client()
-    resp = await client.messages.create(
+    resp = await client.aio.models.generate_content(
         model=FAST_MODEL,
-        max_tokens=256,
-        messages=[{"role": "user", "content": prompt}],
+        contents=prompt,
+        config=types.GenerateContentConfig(max_output_tokens=256),
     )
-    return resp.content[0].text.strip()
+    return resp.text.strip()

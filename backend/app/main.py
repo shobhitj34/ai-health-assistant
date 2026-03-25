@@ -76,7 +76,18 @@ async def websocket_endpoint(
 
         # Send greeting to brand-new users (never had a message)
         if user.message_count == 0:
-            await send_initial_greeting(websocket, user, db)
+            try:
+                await send_initial_greeting(websocket, user, db)
+            except Exception as e:
+                logger.exception("Initial greeting failed for session=%s", session_id)
+                # Mark count so reconnects don't retrigger the greeting loop
+                from .database import update_user_count
+                update_user_count(db, user.id, 1)
+                user.message_count = 1
+                await websocket.send_json({
+                    "type": "error",
+                    "message": "Namaste! I'm Disha, your health coach. I had trouble connecting — please send a message to start.",
+                })
 
         while True:
             try:
