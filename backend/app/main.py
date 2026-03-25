@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import logging
 from contextlib import asynccontextmanager
@@ -22,9 +23,12 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    init_db()
+    # Run blocking DB init in a thread so the event loop stays responsive
+    # during PostgreSQL cold-start (otherwise Render health checks time out)
+    await asyncio.to_thread(init_db)
     logger.info("Database initialised")
-    _auto_seed()
+    # Seed protocols in the background so startup doesn't block health checks
+    asyncio.get_event_loop().run_in_executor(None, _auto_seed)
     yield
 
 
