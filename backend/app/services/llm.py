@@ -6,6 +6,7 @@ import logging
 
 from google import genai
 from google.genai import types
+from google.genai.errors import ClientError
 from sqlalchemy.orm import Session
 
 from ..models import User, Message, Protocol
@@ -151,16 +152,28 @@ async def _stream_to_websocket(
         temperature=0.7,
     )
 
-    stream = await client.aio.models.generate_content_stream(
-        model=MAIN_MODEL,
-        contents=contents,
-        config=config,
-    )
-    async for chunk in stream:
-        text = chunk.text or ""
-        if text:
-            full_response += text
-            await websocket.send_json({"type": "chunk", "content": text})
+    try:
+        stream = await asyncio.wait_for(
+            client.aio.models.generate_content_stream(
+                model=MAIN_MODEL,
+                contents=contents,
+                config=config,
+            ),
+            timeout=30,
+        )
+        async for chunk in stream:
+            text = chunk.text or ""
+            if text:
+                full_response += text
+                await websocket.send_json({"type": "chunk", "content": text})
+    except ClientError as e:
+        if e.status_code == 429:
+            raise RuntimeError(
+                "I've hit my usage limit for now. Please try again in a little while! 🙏"
+            )
+        raise
+    except asyncio.TimeoutError:
+        raise RuntimeError("I took too long to respond. Please try again!")
 
     return full_response
 
@@ -292,13 +305,16 @@ Rules:
 - Return ONLY the JSON, no explanation"""
 
         client = get_client()
-        response = await client.aio.models.generate_content(
-            model=FAST_MODEL,
-            contents=extraction_prompt,
-            config=types.GenerateContentConfig(
-                max_output_tokens=512,
-                temperature=0.1,
+        response = await asyncio.wait_for(
+            client.aio.models.generate_content(
+                model=FAST_MODEL,
+                contents=extraction_prompt,
+                config=types.GenerateContentConfig(
+                    max_output_tokens=512,
+                    temperature=0.1,
+                ),
             ),
+            timeout=20,
         )
 
         raw = response.text.strip()
