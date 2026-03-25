@@ -24,7 +24,26 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     init_db()
     logger.info("Database initialised")
+    _auto_seed()
     yield
+
+
+def _auto_seed():
+    """Seed protocols on startup if the table is empty (safe to run every boot)."""
+    from .database import SessionLocal as _SL
+    from .models import Protocol
+    import importlib, sys
+    db = _SL()
+    try:
+        if db.query(Protocol).count() == 0:
+            # Import seed module dynamically to avoid circular deps
+            import scripts.seed_protocols as seed_mod
+            seed_mod.seed()
+            logger.info("Protocols seeded automatically")
+    except Exception:
+        logger.warning("Auto-seed skipped (seed script not found or already seeded)")
+    finally:
+        db.close()
 
 
 app = FastAPI(title="Disha Health Coach API", lifespan=lifespan)

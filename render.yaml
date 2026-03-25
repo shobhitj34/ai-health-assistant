@@ -1,0 +1,22 @@
+databases:
+  - name: disha-db
+    databaseName: disha
+    plan: free
+
+services:
+  - type: web
+    name: disha-health-coach
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    plan: free
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false          # you set this manually in the Render dashboard
+      - key: DATABASE_URL
+        fromDatabase:
+          name: disha-db
+          property: connectionString
+      - key: PYTHON_VERSION
+        value: "3.11.0"

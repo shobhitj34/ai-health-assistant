@@ -1,10 +1,8 @@
 """
 Seed the database with health protocols and policies.
 Run once: python -m scripts.seed_protocols  (from the backend/ directory)
+Also called automatically on server startup if the protocols table is empty.
 """
-import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
 from dotenv import load_dotenv
 load_dotenv()
 

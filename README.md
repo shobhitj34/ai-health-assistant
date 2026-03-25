@@ -195,11 +195,27 @@ This is intentionally simple. Given more time, embeddings + cosine similarity wo
 
 ---
 
-## Deployment notes
+## Deploying to Render (free)
 
-The backend serves the frontend from `/` via FastAPI's `StaticFiles`. Any single-server host works:
+A `render.yaml` is included for one-click deployment.
 
-- **Render** – set `Start Command` to `cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-- **Railway / Fly.io** – same pattern; add environment variables in the dashboard
+### Steps
 
-For a production Postgres database, set `DATABASE_URL=postgresql://user:pass@host/db`.
+1. Push this repo to GitHub (already done)
+2. Go to [render.com](https://render.com) → **New** → **Blueprint**
+3. Connect your GitHub account and select the `ai-health-assistant` repo
+4. Render will detect `render.yaml` and create:
+   - A **PostgreSQL** database (`disha-db`)
+   - A **Web Service** (`disha-health-coach`)
+5. Before deploying, set the secret environment variable in the Render dashboard:
+   - Service → **Environment** → Add `GEMINI_API_KEY` = your key
+6. Click **Deploy** — the app will be live at `https://disha-health-coach.onrender.com`
+
+> **Note:** On the free plan the service spins down after 15 minutes of inactivity. The first request after a cold start takes ~30 seconds.
+
+### What render.yaml does
+- Provisions a free PostgreSQL database
+- Sets `DATABASE_URL` automatically from the database connection string
+- Runs `uvicorn` on the `$PORT` Render assigns
+- Uses Python 3.11 on the server
+- Protocols are seeded automatically on first startup (no manual step needed)
